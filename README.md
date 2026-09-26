@@ -17,7 +17,7 @@ Still in progress. I am building it in small steps, one commit per step.
 ## Folders
 
 - `data/brief_samples` - the sample member file and redemption JSON from the brief
-- `data/country_extracts` - USA.csv, IND.csv and AUS.xlsx as received (AUS.csv is saved from Excel since Snowflake can't read xlsx)
+- `data/country_extracts` - USA.csv, IND.csv and AUS.xlsx, kept as received. Reference only, not loaded (see `docs/ANALYSIS.md`)
 - `data/test_scenarios` - test data I created to prove specific cases. Not part of the brief.
 - `sql` - scripts, run in number order
 - `docs` - data analysis, design notes and demo script
