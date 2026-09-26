@@ -1,0 +1,3 @@
+{"member_id": "223457", "feed_date": "20240116", "redemptions": [{"txn_id": "RX10092", "txn_date": "20240113", "partner": "SkyPoints", "miles_redeemed": 5000, "status": "COMPLETED"}, {"txn_id": "RX10093", "txn_date": "20240115", "partner": "AeroLink", "miles_redeemed": -300, "status": "COMPLETED"}]}
+{"member_id": "999999", "feed_date": "20240116", "redemptions": [{"txn_id": "RX10094", "txn_date": "20240114", "partner": "AeroLink", "miles_redeemed": 2000, "status": "COMPLETED"}]}
+{"member_id": "223458", "feed_date": "20240116", "redemptions": "not an array"}
