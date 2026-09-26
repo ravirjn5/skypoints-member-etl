@@ -1,0 +1,21 @@
+# snowflake connection details and keys, keep these local
+.snowsql/
+.snowflake/
+config.toml
+connections.toml
+*.p8
+*.pem
+.env
+
+# local logs from test runs
+logs/
+*.log
+
+# excel temp file (shows up while AUS.xlsx is open)
+~$*
+
+# os / editor files
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/

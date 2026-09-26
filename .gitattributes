@@ -1,0 +1,2 @@
+# don't let git change line endings in the source data files
+data/** -text
