@@ -1,0 +1,141 @@
+/* 99_tests.sql
+   Expected vs actual tests. Run after the full demo flow in manual_checks/run_step7_check.sql
+   (day 1, day 2, late file with the forced failure and restart).
+   Every test writes one row to DQ.TEST_RESULT; the last query is the summary. */
+
+USE DATABASE SKYPOINTS_DB;
+
+CREATE TABLE IF NOT EXISTS DQ.TEST_RESULT (
+    TEST_NAME    VARCHAR(200)  NOT NULL,
+    EXPECTED     VARCHAR(200),
+    ACTUAL       VARCHAR(200),
+    PASSED       BOOLEAN,
+    INSERT_DATE  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+DELETE FROM DQ.TEST_RESULT;
+
+-- all five country tables side by side, used by several tests
+CREATE OR REPLACE TEMPORARY VIEW V_ALL_COUNTRY AS
+          SELECT 'USA' AS TABLE_COUNTRY, MEMBER_ID, COUNTRY_CODE FROM MAIN.TABLE_USA
+UNION ALL SELECT 'IND', MEMBER_ID, COUNTRY_CODE FROM MAIN.TABLE_INDIA
+UNION ALL SELECT 'PHL', MEMBER_ID, COUNTRY_CODE FROM MAIN.TABLE_PHILIPPINES
+UNION ALL SELECT 'CAN', MEMBER_ID, COUNTRY_CODE FROM MAIN.TABLE_CANADA
+UNION ALL SELECT 'AUS', MEMBER_ID, COUNTRY_CODE FROM MAIN.TABLE_AUSTRALIA;
+
+INSERT INTO DQ.TEST_RESULT (TEST_NAME, EXPECTED, ACTUAL, PASSED)
+SELECT TEST_NAME, EXPECTED, ACTUAL, EQUAL_NULL(EXPECTED, ACTUAL)
+FROM (
+    /* ---- derived columns ---- */
+    SELECT 'Elena age is 38' AS TEST_NAME, '38' AS EXPECTED,
+           (SELECT AGE::VARCHAR FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '223457') AS ACTUAL
+    UNION ALL
+    SELECT 'Age formula: day before birthday gives the lower age', '38',
+           (SELECT (DATEDIFF('year', '1985-03-05'::DATE, '2024-03-04'::DATE)
+                    - IFF(DATEADD('year', DATEDIFF('year', '1985-03-05'::DATE, '2024-03-04'::DATE), '1985-03-05'::DATE) > '2024-03-04'::DATE, 1, 0))::VARCHAR)
+    UNION ALL
+    SELECT 'Nora is stale (last flight 2012)', 'true',
+           (SELECT STALE_MEMBER::VARCHAR FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '22345')
+    UNION ALL
+    SELECT 'Ravi is not stale (flew 6 days before the file date)', 'false',
+           (SELECT STALE_MEMBER::VARCHAR FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '223458')
+
+    /* ---- type conversion and mapping ---- */
+    UNION ALL
+    SELECT 'PHIL maps to PHL, Mateo in TABLE_PHILIPPINES', 'PHL',
+           (SELECT TABLE_COUNTRY FROM V_ALL_COUNTRY WHERE MEMBER_ID = '223459')
+    UNION ALL
+    SELECT 'AU maps to AUS, Jacob in TABLE_AUSTRALIA', 'AUS',
+           (SELECT TABLE_COUNTRY FROM V_ALL_COUNTRY WHERE MEMBER_ID = '2256')
+    UNION ALL
+    SELECT 'DOB 3051985 fixed to 1985-03-05 (Aiko)', '1985-03-05',
+           (SELECT DOB::VARCHAR FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '223472')
+
+    /* ---- rejects and quarantine ---- */
+    UNION ALL
+    SELECT 'Enrollment date 20211313 rejected (Zara)', 'INVALID_ENROLLMENT_DATE',
+           (SELECT MAX(IFF(ARRAY_CONTAINS('INVALID_ENROLLMENT_DATE'::VARIANT, REASON), 'INVALID_ENROLLMENT_DATE', NULL))
+            FROM DQ.MEMBER_QUARANTINE WHERE MEMBER_ID = '223473')
+    UNION ALL
+    SELECT 'Unknown country XYZ rejected (Omar)', 'UNMAPPED_COUNTRY',
+           (SELECT MAX(IFF(ARRAY_CONTAINS('UNMAPPED_COUNTRY'::VARIANT, REASON), 'UNMAPPED_COUNTRY', NULL))
+            FROM DQ.MEMBER_QUARANTINE WHERE MEMBER_ID = '223471')
+    UNION ALL
+    SELECT 'Same member twice, same flight date: both rows quarantined (Liam)', '2',
+           (SELECT COUNT(*)::VARCHAR FROM DQ.MEMBER_QUARANTINE
+            WHERE MEMBER_ID = '223470' AND ARRAY_CONTAINS('DUPLICATE_MEMBER_CONFLICT'::VARIANT, REASON))
+    UNION ALL
+    SELECT 'No quarantined member reached a country table', '0',
+           (SELECT COUNT(*)::VARCHAR FROM V_ALL_COUNTRY
+            WHERE MEMBER_ID IN ('223470', '223471', '223473') OR MEMBER_ID IS NULL)
+
+    /* ---- latest record wins ---- */
+    UNION ALL
+    SELECT 'Ravi moved: only in TABLE_USA', 'USA',
+           (SELECT LISTAGG(TABLE_COUNTRY, ',') FROM V_ALL_COUNTRY WHERE MEMBER_ID = '223458')
+    UNION ALL
+    SELECT 'One move logged for Ravi, IND to USA', '1',
+           (SELECT COUNT(*)::VARCHAR FROM MAIN.MEMBER_COUNTRY_MOVE
+            WHERE MEMBER_ID = '223458' AND OLD_COUNTRY_CODE = 'IND' AND NEW_COUNTRY_CODE = 'USA')
+    UNION ALL
+    SELECT 'Elena twice in one file: later flight wins, tier PLT', 'PLT',
+           (SELECT TIER_CODE FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '223457')
+    UNION ALL
+    SELECT 'Nora unchanged on day 2: row not rewritten', 'true',
+           (SELECT (INSERT_DATE = LAST_UPDATE_DATE)::VARCHAR FROM MAIN.TABLE_CANADA WHERE MEMBER_ID = '22345')
+    UNION ALL
+    SELECT 'Late file ignored: Ravi still USA', 'USA',
+           (SELECT COUNTRY_CODE FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '223458')
+    UNION ALL
+    SELECT 'Late file ignored: Ravi FILE_TS is still day 2', '2024-01-16 01:00:00',
+           (SELECT TO_VARCHAR(FILE_TS, 'YYYY-MM-DD HH24:MI:SS') FROM MAIN.MEMBER_CURRENT WHERE MEMBER_ID = '223458')
+
+    /* ---- invariants ---- */
+    UNION ALL
+    SELECT 'No member in more than one country table', '0',
+           (SELECT COUNT(*)::VARCHAR FROM (SELECT MEMBER_ID FROM V_ALL_COUNTRY GROUP BY MEMBER_ID HAVING COUNT(*) > 1))
+    UNION ALL
+    SELECT 'Every row sits in its own country table', '0',
+           (SELECT COUNT(*)::VARCHAR FROM V_ALL_COUNTRY WHERE TABLE_COUNTRY <> COUNTRY_CODE)
+    UNION ALL
+    SELECT 'Country tables add up to MEMBER_CURRENT', (SELECT COUNT(*)::VARCHAR FROM MAIN.MEMBER_CURRENT),
+           (SELECT COUNT(*)::VARCHAR FROM V_ALL_COUNTRY)
+
+    /* ---- redemptions ---- */
+    UNION ALL
+    SELECT 'RX10092 status updated to COMPLETED by the day 2 feed', 'COMPLETED',
+           (SELECT STATUS FROM MAIN.REDEMPTION_TXN WHERE TXN_ID = 'RX10092')
+    UNION ALL
+    SELECT 'Member 999999 redemption kept as orphan', 'true',
+           (SELECT IS_ORPHAN::VARCHAR FROM MAIN.V_REDEMPTION_ENRICHED WHERE TXN_ID = 'RX10094')
+    UNION ALL
+    SELECT 'Negative miles flagged (RX10093)', 'true',
+           (SELECT ARRAY_CONTAINS('NON_POSITIVE_MILES'::VARIANT, DQ_ISSUES)::VARCHAR FROM MAIN.REDEMPTION_TXN WHERE TXN_ID = 'RX10093')
+    UNION ALL
+    SELECT 'Document with redemptions not a list quarantined', '1',
+           (SELECT COUNT(*)::VARCHAR FROM DQ.REDEMPTION_QUARANTINE
+            WHERE ARRAY_CONTAINS('REDEMPTIONS_NOT_ARRAY'::VARIANT, REASON))
+
+    /* ---- orchestration ---- */
+    UNION ALL
+    SELECT 'Restart: load 3 staging step failed once then completed', 'E,C',
+           (SELECT LISTAGG(l.SP_EXE_LOG_STATUS, ',') WITHIN GROUP (ORDER BY l.SP_EXE_LOG_ID)
+            FROM CTRL.PROCESS_EXEC_LOG l JOIN CTRL.PROCESS_REGISTRY p ON p.SP_ID = l.SP_ID
+            WHERE l.LOAD_ID = 3 AND p.SP_NAME = 'STG.SP_LOAD_MEMBER')
+    UNION ALL
+    SELECT 'Restart: raw member step not run again on resume', '1',
+           (SELECT COUNT(*)::VARCHAR
+            FROM CTRL.PROCESS_EXEC_LOG l JOIN CTRL.PROCESS_REGISTRY p ON p.SP_ID = l.SP_ID
+            WHERE l.LOAD_ID = 3 AND p.SP_NAME = 'RAW.SP_LOAD_RAW_MEMBER')
+    UNION ALL
+    SELECT 'All loads completed', '0',
+           (SELECT COUNT(*)::VARCHAR FROM CTRL.LOAD_CONTROL WHERE LOAD_STATUS <> 'C')
+);
+
+-- summary
+SELECT PASSED, TEST_NAME, EXPECTED, ACTUAL
+FROM DQ.TEST_RESULT
+ORDER BY PASSED, TEST_NAME;
+
+SELECT COUNT(*) AS TOTAL, COUNT_IF(PASSED) AS PASSED, COUNT_IF(NOT PASSED OR PASSED IS NULL) AS FAILED
+FROM DQ.TEST_RESULT;
