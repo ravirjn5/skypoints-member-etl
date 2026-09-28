@@ -90,7 +90,6 @@ CREATE TABLE IF NOT EXISTS CTRL.PROCESS_EXEC_LOG (
     INS_CNT           NUMBER,
     UPD_CNT           NUMBER,
     DEL_CNT           NUMBER,
-    REJ_CNT           NUMBER,                         -- rows sent to quarantine
     SP_EXE_LOG_ST     TIMESTAMP_NTZ,                  -- start time
     SP_EXE_LOG_ET     TIMESTAMP_NTZ                   -- end time
 );
